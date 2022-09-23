@@ -66,8 +66,8 @@ class gamething : public gameView {
 
 			entities->update(delta);
 
-			auto temp = entities->search<rigidBody>();
-			for (entity *ent : temp) {
+			auto temp = entities->search<rigidBody, syncRigidBodyXZVelocity>();
+			for (auto [ent, body, _] : temp) {
 				if (entities->condemned.count(ent)) {
 					std::cout << "[deleted] " << std::endl;
 					continue;
@@ -84,7 +84,6 @@ class gamething : public gameView {
 				x.update(delta);
 				cam->setPosition((glm::vec3)pos - dir*(10.f + (*x)*(*x)));
 
-				rigidBody *body = ent->get<rigidBody>();
 				glm::vec3 vel;
 
 				if (keyIsPressed(left))  rads += 0.1; 
@@ -121,7 +120,7 @@ class gamething : public gameView {
 			auto rend  = game->services.resolve<renderContext>();
 			auto state = game->services.resolve<gameState>();
 
-			auto que = buildDrawableQueue(game, cam);
+			auto que = buildDrawableQueue(game);
 			que.add(rend->getLightingFlags(), state->rootnode);
 			drawMultiQueue(game, que, rend->framebuffer, cam);
 
@@ -166,6 +165,8 @@ int main(int argc, char **argv) {
 	auto view = std::make_shared<gamething>(game);
 	game->setView(view);
 
+	//rend->setDefaultLightModel("unshaded");
+
 	const char *mapfile = (argc > 1)? argv[1] : "save.map";
 
 	// XXX
@@ -182,6 +183,7 @@ int main(int argc, char **argv) {
 	factories->add<sceneComponent>();
 	factories->add<rigidBody>();
 	factories->add<rigidBodySphere>();
+	factories->add<rigidBodyStaticMesh>();
 	factories->add<syncRigidBodyXZVelocity>();
 	factories->add<syncRigidBodyTransform>();
 	factories->add<PBRShader>();
