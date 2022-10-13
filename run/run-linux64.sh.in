@@ -1,4 +1,5 @@
 #!/bin/sh
 
 cd "$(dirname $0)"
+chmod +x ./lib/ld-linux-x86-64.so.2
 LD_LIBRARY_PATH="$PWD/lib" ./lib/ld-linux-x86-64.so.2 ./bin/@CMAKE_PROJECT_NAME@ $@
