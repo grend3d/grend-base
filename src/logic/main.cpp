@@ -13,17 +13,20 @@
 
 using namespace grendx;
 using namespace grendx::ecs;
+using namespace grendx::engine;
 using namespace grendx::interp;
 
-renderPostChain::ptr createPost(camera::ptr cam, gameMain *game) {
-	auto rend = game->services.resolve<renderContext>();
+renderPostChain::ptr createPost(camera::ptr cam) {
+	auto rend = Resolve<renderContext>();
+	auto ctx  = Resolve<SDLContext>();
+
+	auto settings = ctx->getSettings();
 
 	return std::make_shared<renderPostChain>(
 		std::vector {
 			loadPostShader(GR_PREFIX "shaders/baked/tonemap.frag",
 			               rend->globalShaderOptions)
-		},
-		game->settings.targetResX, game->settings.targetResY
+		}, settings.targetResX, settings.targetResY
 	);
 }
 
@@ -31,18 +34,18 @@ class gamething : public gameView {
 	renderPostChain::ptr post;
 
 	public:
-		gamething(gameMain *game) {
+		gamething() {
 			glm::vec3 dir = glm::normalize(glm::vec3(0.71, -0.71, 0.71));
 			cam->setDirection(dir);
 			cam->setFar(1000);
 
-			post = createPost(cam, game);
+			post = createPost(cam);
 		};
 
-		virtual void handleEvent(gameMain *game, const SDL_Event& ev) {
+		virtual void handleEvent(const SDL_Event& ev) {
 		}
 
-		virtual void update(gameMain *game, float delta) {
+		virtual void update(float delta) {
 			static smoothed<float> rads(0);
 			static smoothed<float> speed(0, 128);
 			static smoothed<glm::vec3> pos;
@@ -54,8 +57,8 @@ class gamething : public gameView {
 			static auto space = keyButton(SDL_SCANCODE_SPACE);
 			static auto meh   = mouseButton(SDL_BUTTON_LEFT);
 
-			auto phys     = game->services.resolve<physics>();
-			auto entities = game->services.resolve<ecs::entityManager>();
+			auto phys     = Resolve<physics>();
+			auto entities = Resolve<ecs::entityManager>();
 
 			rads.update(delta);
 			speed.update(delta);
@@ -76,7 +79,7 @@ class gamething : public gameView {
 				if (!ent->active)
 					continue;
 
-				glm::vec3 pos = ent->node->getTransformTRS().position;
+				glm::vec3 pos = ent->transform.position;
 				glm::vec3 dir = cam->direction();
 				static smoothed<float> x;
 
@@ -116,16 +119,16 @@ class gamething : public gameView {
 			}
 		};
 
-		virtual void render(gameMain *game, renderFramebuffer::ptr fb) {
-			auto rend  = game->services.resolve<renderContext>();
-			auto state = game->services.resolve<gameState>();
+		virtual void render(renderFramebuffer::ptr fb) {
+			auto rend  = Resolve<renderContext>();
+			auto state = Resolve<gameState>();
 
-			auto que = buildDrawableQueue(game);
+			auto que = buildDrawableQueue();
 			que.add(rend->getLightingFlags(), state->rootnode);
-			drawMultiQueue(game, que, rend->framebuffer, cam);
+			drawMultiQueue(que, rend->framebuffer, cam);
 
-			rend->defaultSkybox.draw(cam, rend->framebuffer);
-			setPostUniforms(post, game, cam);
+			//rend->defaultSkybox.draw(cam, rend->framebuffer);
+			setPostUniforms(post, cam);
 			post->draw(rend->framebuffer);
 		};
 };
@@ -136,8 +139,7 @@ int main(int argc, char **argv) {
 	unsigned x = 1920;
 	unsigned y = 1080;
 
-	//gameMain *game = new gameMainDevWindow({ .msaaLevel = 0, .UIScale = 2.0 });
-	gameMainDevWindow *game = new gameMainDevWindow({
+	renderSettings settings = {
 		.scaleX     = 1.0,
 		.scaleY     = 1.0,
 		//.scaleX     = 1.0,
@@ -154,29 +156,31 @@ int main(int argc, char **argv) {
 		.vsync      = 1,
 		.UIScale    = 2.0,
 		//.UIScale    = 1.0,
-	});
+	};
 
-	auto state     = game->services.resolve<gameState>();
-	auto rend      = game->services.resolve<renderContext>();
-	auto phys      = game->services.resolve<physics>();
-	auto entities  = game->services.resolve<ecs::entityManager>();
-	auto factories = game->services.resolve<ecs::serializer>();
+	dev::initialize("grend editor", settings);
 
-	auto view = std::make_shared<gamething>(game);
-	game->setView(view);
+	auto state     = Resolve<gameState>();
+	auto rend      = Resolve<renderContext>();
+	auto phys      = Resolve<physics>();
+	auto entities  = Resolve<ecs::entityManager>();
+	auto factories = Resolve<ecs::serializer>();
+
+	auto view = std::make_shared<gamething>();
+	//dev::setView(view);
 
 	//rend->setDefaultLightModel("unshaded");
 
 	const char *mapfile = (argc > 1)? argv[1] : "save.map";
 
 	// XXX
-	game->editor->selectedNode = state->rootnode;
-	game->editor->setMode(gameEditor::View);
+	//game->editor->selectedNode = state->rootnode;
+	//game->editor->setMode(gameEditor::View);
 
 	static std::vector<physicsObject::ptr> mapPhysics;
 	if (auto p = loadMapCompiled(mapfile)) {
 		state->rootnode = *p;
-		phys->addStaticModels(nullptr, *p, TRS(), mapPhysics);
+		phys->addStaticModels(nullptr, ref_cast<sceneNode>(*p), TRS(), mapPhysics);
 	}
 
 	factories->add<entity>();
@@ -196,13 +200,14 @@ int main(int argc, char **argv) {
 	temp->attach<syncRigidBodyXZVelocity>();
 	temp->attach<sceneComponent>(DEMO_PREFIX "assets/obj/BoomBox.glb");
 	temp->attach<PBRShader>();
-	temp->node->setScale(glm::vec3(100));
+	temp->transform.scale = glm::vec3(100);
 
-	rend->defaultSkybox = skybox("share/proj/assets/tex/cubes/HeroesSquare/", ".jpg");
+	//rend->defaultSkybox = skybox("share/proj/assets/tex/cubes/HeroesSquare/", ".jpg");
 
 	entities->systems["collision"] = std::make_shared<entitySystemCollision>();
 	entities->systems["syncPhysics"] = std::make_shared<syncRigidBodySystem>();
-	game->run();
+	//game->run();
+	dev::run();
 
 	std::cout << "It's alive!" << std::endl;
 	return 0;
