@@ -9,6 +9,11 @@
 #include <grend/ecs/rigidBody.hpp>
 #include <grend/ecs/shader.hpp>
 
+#include <grend/ecs/editor.hpp>
+
+#include <grend/ecs/ref.hpp>
+#include <grend/ecs/link.hpp>
+
 #include <iostream>
 
 using namespace grendx;
@@ -136,8 +141,10 @@ class gamething : public gameView {
 int main(int argc, char **argv) {
 	//unsigned x = 1280;
 	//unsigned y = 720;
-	unsigned x = 1920;
-	unsigned y = 1080;
+	//unsigned x = 1920;
+	//unsigned y = 1080;
+	unsigned x = 2560;
+	unsigned y = 1440;
 
 	renderSettings settings = {
 		.scaleX     = 1.0,
@@ -165,11 +172,39 @@ int main(int argc, char **argv) {
 	auto phys      = Resolve<physics>();
 	auto entities  = Resolve<ecs::entityManager>();
 	auto factories = Resolve<ecs::serializer>();
+	auto editor    = Resolve<ecs::editor>();
 
 	auto view = std::make_shared<gamething>();
 	//dev::setView(view);
 
 	//rend->setDefaultLightModel("unshaded");
+
+	factories->add<entity>();
+	factories->add<sceneComponent>();
+	factories->add<rigidBody>();
+	factories->add<rigidBodySphere>();
+	factories->add<rigidBodyStaticMesh>();
+	factories->add<syncRigidBodyXZVelocity>();
+	factories->add<syncRigidBodyTransform>();
+	factories->add<PBRShader>();
+	factories->add<UnlitShader>();
+
+	factories->add<sceneNode>();
+	factories->add<sceneImport>();
+	factories->add<sceneSkin>();
+	factories->add<sceneParticles>();
+	factories->add<sceneBillboardParticles>();
+	factories->add<sceneLight>();
+	factories->add<sceneLightPoint>();
+	factories->add<sceneLightSpot>();
+	factories->add<sceneLightDirectional>();
+	factories->add<sceneReflectionProbe>();
+	factories->add<sceneIrradianceProbe>();
+
+	factories->add<baseLink>();
+	factories->add<ecs::link<sceneNode>>();
+
+	editor->add<ecs::entity>();
 
 	const char *mapfile = (argc > 1)? argv[1] : "save.map";
 
@@ -182,16 +217,6 @@ int main(int argc, char **argv) {
 		state->rootnode = *p;
 		phys->addStaticModels(nullptr, ref_cast<sceneNode>(*p), TRS(), mapPhysics);
 	}
-
-	factories->add<entity>();
-	factories->add<sceneComponent>();
-	factories->add<rigidBody>();
-	factories->add<rigidBodySphere>();
-	factories->add<rigidBodyStaticMesh>();
-	factories->add<syncRigidBodyXZVelocity>();
-	factories->add<syncRigidBodyTransform>();
-	factories->add<PBRShader>();
-	factories->add<UnlitShader>();
 
 	//entity *temp = new entity(entities.get());
 	entity *temp = entities->construct<entity>();
@@ -207,7 +232,7 @@ int main(int argc, char **argv) {
 	entities->systems["collision"] = std::make_shared<entitySystemCollision>();
 	entities->systems["syncPhysics"] = std::make_shared<syncRigidBodySystem>();
 	//game->run();
-	dev::run();
+	dev::run(view);
 
 	std::cout << "It's alive!" << std::endl;
 	return 0;
