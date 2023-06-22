@@ -14,6 +14,8 @@
 #include <grend/ecs/ref.hpp>
 #include <grend/ecs/link.hpp>
 
+#include <grend/ecs/animationController.hpp>
+
 #include <iostream>
 
 using namespace grendx;
@@ -74,7 +76,7 @@ class gamething : public gameView {
 
 			entities->update(delta);
 
-			auto temp = entities->search<rigidBody, syncRigidBodyXZVelocity>();
+			auto temp = entities->search<rigidBody, sceneComponent>();
 			for (auto [ent, body, _] : temp) {
 				if (entities->condemned.count(ent)) {
 					std::cout << "[deleted] " << std::endl;
@@ -84,7 +86,7 @@ class gamething : public gameView {
 				if (!ent->active)
 					continue;
 
-				glm::vec3 pos = ent->transform.position;
+				glm::vec3 pos = ent->transform.getTRS().position;
 				glm::vec3 dir = cam->direction();
 				static smoothed<float> x;
 
@@ -132,7 +134,7 @@ class gamething : public gameView {
 			que.add(rend->getLightingFlags(), state->rootnode);
 			drawMultiQueue(que, rend->framebuffer, cam);
 
-			//rend->defaultSkybox.draw(cam, rend->framebuffer);
+			rend->defaultSkybox->draw(cam, rend->framebuffer);
 			setPostUniforms(post, cam);
 			post->draw(rend->framebuffer);
 		};
@@ -184,8 +186,9 @@ int main(int argc, char **argv) {
 	factories->add<rigidBody>();
 	factories->add<rigidBodySphere>();
 	factories->add<rigidBodyStaticMesh>();
-	factories->add<syncRigidBodyXZVelocity>();
-	factories->add<syncRigidBodyTransform>();
+	factories->add<rigidBodyCapsule>();
+	factories->add<rigidBodyBox>();
+	factories->add<rigidBodyCylinder>();
 	factories->add<PBRShader>();
 	factories->add<UnlitShader>();
 
@@ -201,37 +204,55 @@ int main(int argc, char **argv) {
 	factories->add<sceneReflectionProbe>();
 	factories->add<sceneIrradianceProbe>();
 
-	factories->add<baseLink>();
-	factories->add<ecs::link<sceneNode>>();
+	factories->add<animationController>();
 
 	editor->add<ecs::entity>();
+	editor->add<ecs::rigidBody>();
+	editor->add<ecs::rigidBodySphere>();
+	editor->add<ecs::rigidBodyStaticMesh>();
+	editor->add<ecs::rigidBodyCapsule>();
+	editor->add<ecs::rigidBodyBox>();
+	editor->add<ecs::rigidBodyCylinder>();
+	editor->add<ecs::sceneComponent>();
+
+	editor->add<sceneNode>();
+	editor->add<sceneImport>();
+	editor->add<sceneParticles>();
+	editor->add<sceneBillboardParticles>();
+	editor->add<sceneLight>();
+	editor->add<sceneLightPoint>();
+	editor->add<sceneLightSpot>();
+	editor->add<sceneLightDirectional>();
+	editor->add<sceneReflectionProbe>();
+	editor->add<sceneIrradianceProbe>();
+
+	editor->add<animationController>();
 
 	const char *mapfile = (argc > 1)? argv[1] : "save.map";
 
-	// XXX
-	//game->editor->selectedNode = state->rootnode;
-	//game->editor->setMode(gameEditor::View);
-
-	static std::vector<physicsObject::ptr> mapPhysics;
 	if (auto p = loadMapCompiled(mapfile)) {
 		state->rootnode = *p;
-		phys->addStaticModels(nullptr, ref_cast<sceneNode>(*p), TRS(), mapPhysics);
 	}
 
-	//entity *temp = new entity(entities.get());
+	for (auto* ent : entities->entities) {
+		entities->activate(ent);
+	}
+
 	entity *temp = entities->construct<entity>();
 	entities->add(temp);
-	temp->attach<rigidBodySphere>(glm::vec3 {0, 10, 0}, 1, 1);
-	temp->attach<syncRigidBodyXZVelocity>();
+	auto *body = temp->attach<rigidBodySphere>(glm::vec3 {0, 40, 0}, 1, 1);
 	temp->attach<sceneComponent>(DEMO_PREFIX "assets/obj/BoomBox.glb");
 	temp->attach<PBRShader>();
-	temp->transform.scale = glm::vec3(100);
+	body->phys->setAngularFactor({0, 1, 0});
 
-	//rend->defaultSkybox = skybox("share/proj/assets/tex/cubes/HeroesSquare/", ".jpg");
+	TRS foo = temp->transform.getTRS();
+	foo.scale = glm::vec3(100);
+	temp->transform.set(foo);
+
+	rend->defaultSkybox = std::make_unique<skyRenderHDRI>("share/proj/assets/tex/blocky_photo_studio_2k_alt.hdr");
 
 	entities->systems["collision"] = std::make_shared<entitySystemCollision>();
-	entities->systems["syncPhysics"] = std::make_shared<syncRigidBodySystem>();
-	//game->run();
+	entities->systems["syncPhysics"] = std::make_shared<rigidBodyUpdateSystem>();
 	dev::run(view);
 
 	std::cout << "It's alive!" << std::endl;
