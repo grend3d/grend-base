@@ -1,5 +1,4 @@
 #include <grend/gameMainDevWindow.hpp>
-#include <grend/scancodes.hpp>
 #include <grend/loadScene.hpp>
 #include <grend/renderUtils.hpp>
 #include <grend/interpolation.hpp>
@@ -16,7 +15,13 @@
 
 #include <grend/ecs/animationController.hpp>
 
+#include <systems/playerCameraSystem.hpp>
+#include <systems/playerMovementSystem.hpp>
+#include <systems/groundDespawnPlane.hpp>
+
 #include <iostream>
+#include <fstream>
+#include <functional>
 
 using namespace grendx;
 using namespace grendx::ecs;
@@ -31,104 +36,82 @@ renderPostChain::ptr createPost(camera::ptr cam) {
 
 	return std::make_shared<renderPostChain>(
 		std::vector {
+			/*
+			loadPostShader(GR_PREFIX "shaders/baked/deferred-metal-roughness-pbr.frag",
+			               rend->globalShaderOptions),
+						   */
+			/*
+			loadPostShader(GR_PREFIX "shaders/baked/fog-volumetric.frag",
+							rend->globalShaderOptions),
+			 */
 			loadPostShader(GR_PREFIX "shaders/baked/tonemap.frag",
-			               rend->globalShaderOptions)
-		}, settings.targetResX, settings.targetResY
-	);
+			               rend->globalShaderOptions),
+			/*
+			loadPostShader(GR_PREFIX "shaders/baked/boxblur.frag",
+			               rend->globalShaderOptions),
+			 */
+		});
 }
 
 class gamething : public gameView {
 	renderPostChain::ptr post;
+	Texture::ptr bluenoise;
 
 	public:
 		gamething() {
-			glm::vec3 dir = glm::normalize(glm::vec3(0.71, -0.71, 0.71));
-			cam->setDirection(dir);
 			cam->setFar(1000);
-
 			post = createPost(cam);
+
+			auto data = std::make_shared<textureData>(GR_PREFIX "assets/tex/bluenoise.png");
+			//auto data = std::make_shared<textureData>("/tmp/bayer.ppm");
+			data->minFilter = textureData::Nearest;
+			data->magFilter = textureData::Nearest;
+			bluenoise = texcache(data);
 		};
 
 		virtual void handleEvent(const SDL_Event& ev) {
+			if (ev.type == SDL_WINDOWEVENT
+			    && ev.window.event == SDL_WINDOWEVENT_RESIZED)
+			{
+				auto rend = Resolve<renderContext>();
+
+				auto width = ev.window.data1;
+				auto height = ev.window.data2;
+
+				float scaleX = rend->settings.scaleX;
+				float scaleY = rend->settings.scaleY;
+
+				rend->framebuffer->setSize(width*scaleX, height*scaleY);
+				rend->defaultFramebuffer->setSize(width, height);
+
+				/*
+				if (post != nullptr) {
+					post->setSize(width, height);
+				}
+				*/
+			}
 		}
 
 		virtual void update(float delta) {
-			static smoothed<float> rads(0);
-			static smoothed<float> speed(0, 128);
-			static smoothed<glm::vec3> pos;
-
-			static auto left  = keyButton(SDL_SCANCODE_LEFT);
-			static auto right = keyButton(SDL_SCANCODE_RIGHT);
-			static auto up    = keyButton(SDL_SCANCODE_UP);
-			static auto down  = keyButton(SDL_SCANCODE_DOWN);
-			static auto space = keyButton(SDL_SCANCODE_SPACE);
-			static auto meh   = mouseButton(SDL_BUTTON_LEFT);
-
 			auto phys     = Resolve<physics>();
 			auto entities = Resolve<ecs::entityManager>();
-
-			rads.update(delta);
-			speed.update(delta);
-			pos.update(delta);
 
 			phys->stepSimulation(delta);
 			phys->filterCollisions();;
 
 			entities->update(delta);
-
-			auto temp = entities->search<rigidBody, sceneComponent>();
-			for (auto [ent, body, _] : temp) {
-				if (entities->condemned.count(ent)) {
-					std::cout << "[deleted] " << std::endl;
-					continue;
-				}
-
-				if (!ent->active)
-					continue;
-
-				glm::vec3 pos = ent->transform.getTRS().position;
-				glm::vec3 dir = cam->direction();
-				static smoothed<float> x;
-
-				x = 8.f * keyIsPressed(meh);
-				x.update(delta);
-				cam->setPosition((glm::vec3)pos - dir*(10.f + (*x)*(*x)));
-
-				glm::vec3 vel;
-
-				if (keyIsPressed(left))  rads += 0.1; 
-				if (keyIsPressed(right)) rads -= 0.1; 
-
-				cam->setDirection(glm::vec3 {
-					cos(rads),
-					-0.71,
-					sin(rads)
-				});
-
-				speed = glm::length(body->phys->getVelocity());
-
-				if (keyIsPressed(up)) {
-					glm::vec3 dir = glm::cross(cam->right(), glm::vec3(0, 1, 0));
-					glm::vec3 foo = glm::normalize(body->phys->getVelocity());
-					float asdf = 2.f - (glm::dot(foo, dir) + 1.f);
-					vel = dir * 10.f*(1.f + 10*asdf);
-					body->phys->setAcceleration(vel);
-				}
-
-				if (keyIsPressed(down)) {
-					glm::vec3 dir = glm::cross(cam->right(), glm::vec3(0, 1, 0));
-					vel = dir * -10.f;
-					body->phys->setVelocity(vel);
-				}
-
-				cam->setFovx(80 + 4 * min(*speed, 40.f));
-				break;
-			}
 		};
 
 		virtual void render(renderFramebuffer::ptr fb) {
 			auto rend  = Resolve<renderContext>();
 			auto state = Resolve<gameState>();
+			auto entities = Resolve<ecs::entityManager>();
+
+			const auto cam = static_pointer_cast<playerCameraSystem>(entities->systems["playerCamera"])->cam;
+
+			auto vportPos  = rend->getDrawOffset();
+			auto vportSize = rend->getDrawSize();
+			glViewport(vportPos.x, fb->height - (vportPos.y + vportSize.y), vportSize.x, vportSize.y);
 
 			auto que = buildDrawableQueue();
 			que.add(rend->getLightingFlags(), state->rootnode);
@@ -136,7 +119,10 @@ class gamething : public gameView {
 
 			rend->defaultSkybox->draw(cam, rend->framebuffer);
 			setPostUniforms(post, cam);
-			post->draw(rend->framebuffer);
+			glActiveTexture(TEX_GL_LIGHTMAP);
+			bluenoise->bind();
+			post->setUniform("blueNoise", TEXU_LIGHTMAP);
+			post->draw(rend->framebuffer, rend->defaultFramebuffer);
 		};
 };
 
@@ -171,62 +157,13 @@ int main(int argc, char **argv) {
 
 	auto state     = Resolve<gameState>();
 	auto rend      = Resolve<renderContext>();
-	auto phys      = Resolve<physics>();
 	auto entities  = Resolve<ecs::entityManager>();
 	auto factories = Resolve<ecs::serializer>();
-	auto editor    = Resolve<ecs::editor>();
 
 	auto view = std::make_shared<gamething>();
 	//dev::setView(view);
 
 	//rend->setDefaultLightModel("unshaded");
-
-	factories->add<entity>();
-	factories->add<sceneComponent>();
-	factories->add<rigidBody>();
-	factories->add<rigidBodySphere>();
-	factories->add<rigidBodyStaticMesh>();
-	factories->add<rigidBodyCapsule>();
-	factories->add<rigidBodyBox>();
-	factories->add<rigidBodyCylinder>();
-	factories->add<PBRShader>();
-	factories->add<UnlitShader>();
-
-	factories->add<sceneNode>();
-	factories->add<sceneImport>();
-	factories->add<sceneSkin>();
-	factories->add<sceneParticles>();
-	factories->add<sceneBillboardParticles>();
-	factories->add<sceneLight>();
-	factories->add<sceneLightPoint>();
-	factories->add<sceneLightSpot>();
-	factories->add<sceneLightDirectional>();
-	factories->add<sceneReflectionProbe>();
-	factories->add<sceneIrradianceProbe>();
-
-	factories->add<animationController>();
-
-	editor->add<ecs::entity>();
-	editor->add<ecs::rigidBody>();
-	editor->add<ecs::rigidBodySphere>();
-	editor->add<ecs::rigidBodyStaticMesh>();
-	editor->add<ecs::rigidBodyCapsule>();
-	editor->add<ecs::rigidBodyBox>();
-	editor->add<ecs::rigidBodyCylinder>();
-	editor->add<ecs::sceneComponent>();
-
-	editor->add<sceneNode>();
-	editor->add<sceneImport>();
-	editor->add<sceneParticles>();
-	editor->add<sceneBillboardParticles>();
-	editor->add<sceneLight>();
-	editor->add<sceneLightPoint>();
-	editor->add<sceneLightSpot>();
-	editor->add<sceneLightDirectional>();
-	editor->add<sceneReflectionProbe>();
-	editor->add<sceneIrradianceProbe>();
-
-	editor->add<animationController>();
 
 	const char *mapfile = (argc > 1)? argv[1] : "save.map";
 
@@ -238,21 +175,24 @@ int main(int argc, char **argv) {
 		entities->activate(ent);
 	}
 
-	entity *temp = entities->construct<entity>();
+	std::ifstream charjson("./char.ent");
+	nlohmann::json js = nlohmann::json::parse(charjson);
+
+	entity *temp = factories->build(entities, js);
+	//entity *temp = entities->construct<entity>();
 	entities->add(temp);
 	auto *body = temp->attach<rigidBodySphere>(glm::vec3 {0, 40, 0}, 1, 1);
-	temp->attach<sceneComponent>(DEMO_PREFIX "assets/obj/BoomBox.glb");
-	temp->attach<PBRShader>();
+	//temp->attach<sceneComponent>(DEMO_PREFIX "assets/obj/BoomBox.glb");
+	//temp->attach<PBRShader>();
 	body->phys->setAngularFactor({0, 1, 0});
-
-	TRS foo = temp->transform.getTRS();
-	foo.scale = glm::vec3(100);
-	temp->transform.set(foo);
 
 	rend->defaultSkybox = std::make_unique<skyRenderHDRI>("share/proj/assets/tex/blocky_photo_studio_2k_alt.hdr");
 
 	entities->systems["collision"] = std::make_shared<entitySystemCollision>();
 	entities->systems["syncPhysics"] = std::make_shared<rigidBodyUpdateSystem>();
+	entities->systems["playerMovement"] = std::make_shared<playerMovementSystem>();
+	entities->systems["playerCamera"] = std::make_shared<playerCameraSystem>();
+	entities->systems["groundDespawnPlane"] = std::make_shared<groundDespawnPlane>();
 	dev::run(view);
 
 	std::cout << "It's alive!" << std::endl;
